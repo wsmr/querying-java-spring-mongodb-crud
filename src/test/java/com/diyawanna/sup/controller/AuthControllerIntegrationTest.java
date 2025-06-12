@@ -13,7 +13,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureWebMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+
+//import org.springframework.boot.test.mock.mockito.MockBean;   //// The @MockBean annotation has been deprecated in Spring Boot 3.x.
+import org.mockito.Mock;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
@@ -43,13 +47,13 @@ class AuthControllerIntegrationTest {
     @Autowired
     private WebApplicationContext webApplicationContext;
 
-    @MockBean
+    @MockitoBean
     private UserRepository userRepository;
 
-    @MockBean
+    @MockitoBean
     private PasswordEncoder passwordEncoder;
 
-    @MockBean
+    @MockitoBean
     private JwtUtil jwtUtil;
 
     private MockMvc mockMvc;

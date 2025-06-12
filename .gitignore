@@ -114,3 +114,27 @@ coverage/
 .env.local
 .env.production
 
+# Additional security-sensitive files
+*.properties
+!application.properties
+application-*.yml
+application-*.yaml
+*.yml
+*.yaml
+!src/main/resources/application.yml
+!src/main/resources/application.yaml
+
+# MongoDB specific
+mongo.properties
+database.properties
+
+# Any file containing 'secret' or 'key'
+*secret*
+*key*
+*.pem
+*.p12
+*.jks
+
+# Configuration files that might contain credentials
+config.properties
+db.properties
