@@ -10,6 +10,7 @@ import com.diyawanna.sup.exception.AuthenticationException;
 import com.diyawanna.sup.exception.UserAlreadyExistsException;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -40,7 +41,12 @@ public class AuthenticationService implements UserDetailsService {
     private UserRepository userRepository;
 
     @Autowired
+    @Lazy
     private PasswordEncoder passwordEncoder;
+//    private final PasswordEncoder passwordEncoder;
+//    public AuthenticationService(PasswordEncoder passwordEncoder) {
+//        this.passwordEncoder = passwordEncoder;
+//    }
 
     @Autowired
     private JwtUtil jwtUtil;
