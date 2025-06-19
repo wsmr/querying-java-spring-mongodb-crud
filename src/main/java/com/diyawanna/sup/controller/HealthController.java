@@ -24,11 +24,14 @@ public class HealthController {
      */
     @GetMapping("/health")
     public ResponseEntity<?> health() {
+        long start = System.currentTimeMillis();    // time logger
         Map<String, Object> response = new HashMap<>();
         response.put("status", "UP");
         response.put("application", "Diyawanna Sup Backend");
         response.put("version", "1.0.0");
         response.put("timestamp", LocalDateTime.now());
+        long end = System.currentTimeMillis();
+        System.out.println("Health check executed in " + (end - start) + " ms");
         return ResponseEntity.ok(response);
     }
 
