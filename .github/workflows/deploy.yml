@@ -1,0 +1,230 @@
+# .github/workflows/deploy.yml
+name: 🚀 Diyawanna Spring Boot CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: # Allows manual trigger
+
+env:
+  JAVA_VERSION: '17'
+  JAR_NAME: 'diyawanna-sup-backend-1.0.0.jar'
+  SERVER_IP: '47.254.196.230'
+  SERVER_USER: 'root'
+  SERVICE_NAME: 'diyawanna-app'
+
+jobs:
+  # Job 1: Build and Test
+  build-and-test:
+    name: 🔨 Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: 📦 Cache Maven dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: 🧪 Run tests
+        run: mvn clean test
+
+      - name: 📊 Generate test report
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: Maven Tests
+          path: target/surefire-reports/*.xml
+          reporter: java-junit
+
+      - name: 🔨 Build application
+        run: mvn clean compile package -DskipTests
+
+      - name: 📤 Upload JAR artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: spring-boot-jar
+          path: target/${{ env.JAR_NAME }}
+          retention-days: 30
+
+  # Job 2: Security Scan (Optional but recommended)
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: 📊 Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Job 3: Deploy to Production
+  deploy-production:
+    name: 🚀 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-and-test, security-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production # This requires manual approval if configured
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Download JAR artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: spring-boot-jar
+          path: ./target/
+
+      - name: 🔑 Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: 📤 Upload JAR to server
+        run: |
+          scp -i ~/.ssh/id_rsa target/${{ env.JAR_NAME }} ${{ env.SERVER_USER }}@${{ env.SERVER_IP }}:/root/
+
+      - name: 🔄 Deploy and restart application
+        run: |
+          ssh -i ~/.ssh/id_rsa ${{ env.SERVER_USER }}@${{ env.SERVER_IP }} << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          SERVICE_NAME="${{ env.SERVICE_NAME }}"
+          JAR_FILE="${{ env.JAR_NAME }}"
+          
+          echo "🔄 Deploying application..."
+          
+          # Set environment variables
+          export SPRING_DATA_MONGODB_URI="${{ secrets.MONGODB_URI }}"
+          export JWT_SECRET="${{ secrets.JWT_SECRET }}"
+          export SPRING_PROFILES_ACTIVE="prod"
+          
+          # Check if systemd service exists
+          if systemctl list-unit-files | grep -q "${SERVICE_NAME}.service"; then
+              echo "✅ Service exists, restarting..."
+              sudo systemctl stop "${SERVICE_NAME}" || true
+              sleep 3
+              sudo systemctl start "${SERVICE_NAME}"
+              sleep 5
+          
+              # Check service status
+              if systemctl is-active --quiet "${SERVICE_NAME}"; then
+                  echo "✅ Service restarted successfully"
+                  systemctl status "${SERVICE_NAME}" --no-pager -l
+              else
+                  echo "❌ Service failed to start"
+                  journalctl -u "${SERVICE_NAME}" --no-pager -l -n 20
+                  exit 1
+              fi
+          else
+              echo "⚠️ Service doesn't exist, creating and starting..."
+          
+              # Create systemd service
+              sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOL
+          [Unit]
+          Description=Diyawanna Spring Boot Application
+          After=syslog.target network.target
+          
+          [Service]
+          User=root
+          ExecStart=/usr/bin/java -jar /root/${JAR_FILE}
+          SuccessExitStatus=143
+          Restart=always
+          RestartSec=10
+          StandardOutput=syslog
+          StandardError=syslog
+          Environment="SPRING_DATA_MONGODB_URI=${{ secrets.MONGODB_URI }}"
+          Environment="JWT_SECRET=${{ secrets.JWT_SECRET }}"
+          Environment="SPRING_PROFILES_ACTIVE=prod"
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOL
+          
+              # Reload systemd and start service
+              sudo systemctl daemon-reload
+              sudo systemctl enable "${SERVICE_NAME}"
+              sudo systemctl start "${SERVICE_NAME}"
+              sleep 5
+          
+              if systemctl is-active --quiet "${SERVICE_NAME}"; then
+                  echo "✅ Service created and started successfully"
+              else
+                  echo "❌ Service failed to start"
+                  journalctl -u "${SERVICE_NAME}" --no-pager -l -n 20
+                  exit 1
+              fi
+          fi
+          
+          echo "🎉 Deployment completed successfully!"
+          EOF
+
+      - name: 🏥 Health check
+        run: |
+          echo "🔍 Performing health check..."
+          sleep 10
+          
+          # Try health endpoint first, then root endpoint
+          if curl -f -s http://${{ env.SERVER_IP }}:8080/actuator/health > /dev/null; then
+              echo "✅ Health check passed"
+          elif curl -f -s http://${{ env.SERVER_IP }}:8080 > /dev/null; then
+              echo "✅ Application is responding"
+          else
+              echo "❌ Health check failed"
+              exit 1
+          fi
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa
+
+  # Job 4: Notify deployment status
+  notify:
+    name: 📢 Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: always()
+
+    steps:
+      - name: 📧 Send notification (Success)
+        if: needs.deploy-production.result == 'success'
+        run: |
+          echo "🎉 Deployment successful!"
+          echo "🌐 Application URL: http://${{ env.SERVER_IP }}:8080"
+
+      - name: 📧 Send notification (Failure)
+        if: needs.deploy-production.result == 'failure'
+        run: |
+          echo "❌ Deployment failed!"
+          echo "Please check the logs for more information."
